@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Базар Учёт 🛒</title>
+    <style>
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body { background: #f4f6f8; margin: 0; padding: 15px; color: #333; }
+        .card { background: white; padding: 18px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        h2 { margin-top: 0; font-size: 1.2rem; color: #27ae60; }
+        label { display: block; font-size: 0.85rem; font-weight: 600; margin: 10px 0 4px; color: #555; }
+        input, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; margin-bottom: 8px; }
+        button { border: none; border-radius: 8px; padding: 12px; font-size: 1rem; font-weight: bold; cursor: pointer; color: white; }
+        .btn-green { background: #27ae60; width: 100%; }
+        .btn-blue { background: #2980b9; padding: 6px 10px; font-size: 0.8rem; }
+        .btn-red { background: #e74c3c; padding: 6px 10px; font-size: 0.8rem; }
+        .expense-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+        .expense-row input { margin-bottom: 0; }
+        .del-row-btn { background: #e74c3c; padding: 10px 12px; }
+        .report-item { background: #f9f9f9; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #27ae60; }
+        .report-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .actions { display: flex; gap: 6px; }
+    </style>
+    <link rel="manifest" href="/manifest.json">
+</head>
+<body>
+
+    <div class="card">
+        <h2>📝 Учёт за день (Добавить / Обновить)</h2>
+        <form id="reportForm">
+            <label>Дата отчёта:</label>
+            <input type="date" id="report_date" required>
+
+            <label>Закупка товаров (Расходы):</label>
+            <div id="expensesList"></div>
+            <button type="button" onclick="addExpenseRow()" style="background: #34495e; margin-bottom: 15px;">+ Добавить товар</button>
+
+            <label>Общая выручка за день (Деньги в кассе):</label>
+            <input type="number" step="0.1" id="total_revenue" placeholder="0.00" required>
+
+            <label>Заметки / Примечания:</label>
+            <textarea id="notes" placeholder="Напр: Хороший день, много покупателей"></textarea>
+
+            <button type="submit" class="btn-green">💾 Сохранить / Обновить отчёт</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>📊 История отчётов</h2>
+        <div id="history">Загрузка...</div>
+    </div>
+
+    <script>
+        document.getElementById('report_date').valueAsDate = new Date();
+        let allReports = [];
+
+        function addExpenseRow(name = '', qty = '', price = '') {
+            const container = document.getElementById('expensesList');
+            const row = document.createElement('div');
+            row.className = 'expense-row';
+            row.innerHTML = `
+                <input type="text" placeholder="Товар" value="${name}" class="p-name" required style="flex: 2;">
+                <input type="number" step="0.1" placeholder="Кг" value="${qty}" class="p-qty" required style="flex: 1;">
+                <input type="number" step="0.1" placeholder="Цена" value="${price}" class="p-price" required style="flex: 1;">
+                <button type="button" class="del-row-btn" onclick="this.parentElement.remove()">✕</button>
+            `;
+            container.appendChild(row);
+        }
+
+        addExpenseRow();
+
+        async function loadReports() {
+            const res = await fetch('/reports/');
+            allReports = await res.json();
+            
+            const historyDiv = document.getElementById('history');
+            if (allReports.length === 0) {
+                historyDiv.innerHTML = '<p>Пока нет сохраненных отчетов</p>';
+                return;
+            }
+
+            historyDiv.innerHTML = allReports.reverse().map(rep => `
+                <div class="report-item">
+                    <div class="report-header">
+                        <b>📅 ${rep.date}</b>
+                        <div class="actions">
+                            <button class="btn-blue" onclick="editReport('${rep.date}')">✏️ Изменить</button>
+                            <button class="btn-red" onclick="deleteReport('${rep.date}')">🗑️ Удалить</button>
+                        </div>
+                    </div>
+                    <div>Выручка: <b>${rep.total_revenue}</b> | Затраты: <b>${rep.total_spent}</b></div>
+                    <div style="color: ${rep.net_profit >= 0 ? '#27ae60' : '#e74c3c'}; font-weight: bold;">
+                        Прибыль: ${rep.net_profit}
+                    </div>
+                    ${rep.notes ? `<small style="color: #666;">Заметки: ${rep.notes}</small>` : ''}
+                </div>
+            `).join('');
+        }
+
+        window.editReport = function(dateStr) {
+            const rep = allReports.find(r => r.date === dateStr);
+            if (!rep) return;
+
+            document.getElementById('report_date').value = rep.date;
+            document.getElementById('total_revenue').value = rep.total_revenue;
+            document.getElementById('notes').value = rep.notes || '';
+
+            const container = document.getElementById('expensesList');
+            container.innerHTML = '';
+            
+            if (rep.expenses && rep.expenses.length > 0) {
+                rep.expenses.forEach(ex => {
+                    addExpenseRow(ex.product_name, ex.quantity_kg, ex.buy_price);
+                });
+            } else {
+                addExpenseRow();
+            }
+
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        window.deleteReport = async function(dateStr) {
+            if (!confirm(`Точно удалить отчет за ${dateStr}?`)) return;
+
+            await fetch(`/reports/${dateStr}`, {
+                method: 'DELETE'
+            });
+
+            loadReports();
+        }
+
+        document.getElementById('reportForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const rows = document.querySelectorAll('.expense-row');
+            const expenses = [];
+            rows.forEach(row => {
+                expenses.push({
+                    product_name: row.querySelector('.p-name').value,
+                    quantity_kg: parseFloat(row.querySelector('.p-qty').value),
+                    buy_price: parseFloat(row.querySelector('.p-price').value)
+                });
+            });
+
+            const payload = {
+                report_date: document.getElementById('report_date').value,
+                expenses: expenses,
+                total_revenue: parseFloat(document.getElementById('total_revenue').value),
+                notes: document.getElementById('notes').value
+            };
+
+            await fetch('/reports/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            loadReports();
+            alert('Отчёт успешно сохранен/обновлен!');
+        });
+
+        loadReports();
+    </script>
+</body>
+</html>
