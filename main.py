@@ -14,7 +14,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-client = MongoClient("mongodb://localhost:27017/")
+# Берём ссылку из облака Render, а если запускаем локально — используем компьютер
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/")
+client = MongoClient(MONGO_URL)
 db = client["bazar_app_db"]
 reports_collection = db["reports"]
 
