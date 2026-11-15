@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#27ae60">
+    <title>Вход — Базар Учёт</title>
+    <style>
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body {
+            background: linear-gradient(135deg, #eafaf1 0%, #f4f6f8 55%, #e8f0fe 100%);
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: #333;
+        }
+        .login-card {
+            width: 100%;
+            max-width: 380px;
+            background: #fff;
+            padding: 30px 24px;
+            border-radius: 16px;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.10);
+        }
+        .logo { font-size: 3rem; text-align: center; margin-bottom: 6px; }
+        h1 { margin: 0 0 8px; text-align: center; font-size: 1.45rem; color: #27ae60; }
+        .subtitle { margin: 0 0 22px; text-align: center; color: #777; font-size: 0.92rem; }
+        label { display: block; font-size: 0.85rem; font-weight: 600; margin: 12px 0 5px; color: #555; }
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 9px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        input:focus { border-color: #27ae60; box-shadow: 0 0 0 3px rgba(39, 174, 96, 0.15); }
+        button {
+            width: 100%;
+            margin-top: 20px;
+            border: none;
+            border-radius: 9px;
+            padding: 13px;
+            font-size: 1rem;
+            font-weight: bold;
+            color: #fff;
+            background: #27ae60;
+            cursor: pointer;
+        }
+        button:disabled { opacity: 0.7; cursor: wait; }
+        .error {
+            display: none;
+            margin-top: 14px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: #fdecea;
+            color: #c0392b;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+        .error.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="logo">🛒</div>
+        <h1>Базар Учёт</h1>
+        <p class="subtitle">Вход только для своих</p>
+
+        <form id="loginForm">
+            <label for="username">Логин</label>
+            <input id="username" type="text" autocomplete="username" required autofocus>
+
+            <label for="password">Пароль</label>
+            <input id="password" type="password" autocomplete="current-password" required>
+
+            <button type="submit" id="submitBtn">Войти</button>
+            <div class="error" id="error"></div>
+        </form>
+    </div>
+
+    <script>
+        const form = document.getElementById('loginForm');
+        const errorBox = document.getElementById('error');
+        const submitBtn = document.getElementById('submitBtn');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorBox.classList.remove('show');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Проверяю...';
+
+            try {
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: document.getElementById('username').value.trim(),
+                        password: document.getElementById('password').value
+                    })
+                });
+
+                if (res.ok) {
+                    window.location.href = '/';
+                    return;
+                }
+
+                const data = await res.json().catch(() => ({}));
+                errorBox.textContent = data.detail || 'Неверный логин или пароль';
+                errorBox.classList.add('show');
+            } catch (err) {
+                errorBox.textContent = 'Нет связи с сервером. Попробуйте ещё раз.';
+                errorBox.classList.add('show');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Войти';
+            }
+        });
+    </script>
+</body>
+</html>

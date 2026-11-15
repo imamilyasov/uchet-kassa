@@ -21,10 +21,22 @@
         .report-item { background: #f9f9f9; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #27ae60; }
         .report-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
         .actions { display: flex; gap: 6px; }
+        .topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }
+        .topbar-title { font-weight: 700; font-size: 1.05rem; color: #2c3e50; }
+        .topbar-user { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #666; }
+        .btn-logout { background: #95a5a6; padding: 8px 12px; font-size: 0.8rem; border-radius: 8px; }
     </style>
     <link rel="manifest" href="/manifest.json">
 </head>
 <body>
+
+    <div class="topbar">
+        <div class="topbar-title">🛒 Базар Учёт</div>
+        <div class="topbar-user">
+            <span id="currentUser"></span>
+            <button type="button" class="btn-logout" onclick="logout()">Выйти</button>
+        </div>
+    </div>
 
     <div class="card">
         <h2>📝 Учёт за день (Добавить / Обновить)</h2>
@@ -55,6 +67,25 @@
         document.getElementById('report_date').valueAsDate = new Date();
         let allReports = [];
 
+        async function loadCurrentUser() {
+            try {
+                const res = await fetch('/auth/me');
+                if (!res.ok) {
+                    window.location.href = '/login';
+                    return;
+                }
+                const data = await res.json();
+                document.getElementById('currentUser').textContent = '👤 ' + data.username;
+            } catch (e) {
+                window.location.href = '/login';
+            }
+        }
+
+        async function logout() {
+            await fetch('/auth/logout', { method: 'POST' });
+            window.location.href = '/login';
+        }
+
         function addExpenseRow(name = '', qty = '', price = '') {
             const container = document.getElementById('expensesList');
             const row = document.createElement('div');
@@ -72,6 +103,10 @@
 
         async function loadReports() {
             const res = await fetch('/reports/');
+            if (res.status === 401) {
+                window.location.href = '/login';
+                return;
+            }
             allReports = await res.json();
             
             const historyDiv = document.getElementById('history');
@@ -89,9 +124,9 @@
                             <button class="btn-red" onclick="deleteReport('${rep.date}')">🗑️ Удалить</button>
                         </div>
                     </div>
-                    <div>Выручка: <b>${rep.total_revenue}</b> | Затраты: <b>${rep.total_spent}</b></div>
+                    <div>Выручка: <b>${Number(rep.total_revenue).toFixed(2)}</b> | Затраты: <b>${Number(rep.total_spent).toFixed(2)}</b></div>
                     <div style="color: ${rep.net_profit >= 0 ? '#27ae60' : '#e74c3c'}; font-weight: bold;">
-                        Прибыль: ${rep.net_profit}
+                        Прибыль: ${Number(rep.net_profit).toFixed(2)}
                     </div>
                     ${rep.notes ? `<small style="color: #666;">Заметки: ${rep.notes}</small>` : ''}
                 </div>
@@ -123,9 +158,14 @@
         window.deleteReport = async function(dateStr) {
             if (!confirm(`Точно удалить отчет за ${dateStr}?`)) return;
 
-            await fetch(`/reports/${dateStr}`, {
+            const res = await fetch(`/reports/${dateStr}`, {
                 method: 'DELETE'
             });
+
+            if (res.status === 401) {
+                window.location.href = '/login';
+                return;
+            }
 
             loadReports();
         }
@@ -150,16 +190,27 @@
                 notes: document.getElementById('notes').value
             };
 
-            await fetch('/reports/', {
+            const saveRes = await fetch('/reports/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
 
+            if (saveRes.status === 401) {
+                window.location.href = '/login';
+                return;
+            }
+
+            if (!saveRes.ok) {
+                alert('Не удалось сохранить отчёт. Попробуйте ещё раз.');
+                return;
+            }
+
             loadReports();
             alert('Отчёт успешно сохранен/обновлен!');
         });
 
+        loadCurrentUser();
         loadReports();
     </script>
 </body>
