@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#27ae60">
     <title>Базар Учёт 🛒</title>
     <style>
         * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        body { background: #f4f6f8; margin: 0; padding: 15px; color: #333; }
+        body { background: #f4f6f8; margin: 0; padding: 15px; color: #333; max-width: 600px; margin: auto; }
         .card { background: white; padding: 18px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
         h2 { margin-top: 0; font-size: 1.2rem; color: #27ae60; }
         label { display: block; font-size: 0.85rem; font-weight: 600; margin: 10px 0 4px; color: #555; }
@@ -21,12 +22,29 @@
         .report-item { background: #f9f9f9; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #27ae60; }
         .report-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
         .actions { display: flex; gap: 6px; }
-        .topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }
+        .topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
         .topbar-title { font-weight: 700; font-size: 1.05rem; color: #2c3e50; }
         .topbar-user { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #666; }
         .btn-logout { background: #95a5a6; padding: 8px 12px; font-size: 0.8rem; border-radius: 8px; }
+
+        .statusbar { display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; font-size: 0.82rem; color: #555; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+        .statusbar .dot { width: 9px; height: 9px; border-radius: 50%; background: #95a5a6; flex: 0 0 auto; }
+        .statusbar.online .dot { background: #27ae60; }
+        .statusbar.offline .dot { background: #e74c3c; }
+        .statusbar.pending .dot { background: #f39c12; }
+        .statusbar .status-text { flex: 1; }
+        .statusbar button { padding: 6px 10px; font-size: 0.78rem; background: #ecf0f1; color: #2c3e50; border-radius: 7px; }
+        .statusbar button:disabled { opacity: .6; cursor: wait; }
+
+        .toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 20px); background: #2c3e50; color: #fff; padding: 12px 18px; border-radius: 10px; font-size: 0.9rem; font-weight: 600; opacity: 0; pointer-events: none; transition: .25s; z-index: 200; max-width: 90vw; text-align: center; }
+        .toast.show { opacity: 1; transform: translate(-50%, 0); }
+        .empty { color: #888; text-align: center; padding: 14px 6px; }
     </style>
     <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Базар Учёт">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
 </head>
 <body>
 
@@ -36,6 +54,12 @@
             <span id="currentUser"></span>
             <button type="button" class="btn-logout" onclick="logout()">Выйти</button>
         </div>
+    </div>
+
+    <div class="statusbar" id="statusBar">
+        <span class="dot"></span>
+        <span class="status-text" id="statusText">Проверяю связь…</span>
+        <button type="button" id="syncBtn" onclick="syncNow()">Обновить</button>
     </div>
 
     <div class="card">
@@ -49,12 +73,12 @@
             <button type="button" onclick="addExpenseRow()" style="background: #34495e; margin-bottom: 15px;">+ Добавить товар</button>
 
             <label>Общая выручка за день (Деньги в кассе):</label>
-            <input type="number" step="0.1" id="total_revenue" placeholder="0.00" required>
+            <input type="number" step="0.01" inputmode="decimal" id="total_revenue" placeholder="0.00" required>
 
             <label>Заметки / Примечания:</label>
             <textarea id="notes" placeholder="Напр: Хороший день, много покупателей"></textarea>
 
-            <button type="submit" class="btn-green">💾 Сохранить / Обновить отчёт</button>
+            <button type="submit" class="btn-green" id="saveBtn">💾 Сохранить / Обновить отчёт</button>
         </form>
     </div>
 
@@ -63,78 +87,363 @@
         <div id="history">Загрузка...</div>
     </div>
 
+    <div class="toast" id="toast"></div>
+
     <script>
-        document.getElementById('report_date').valueAsDate = new Date();
+        const LS_REPORTS = 'bazar_reports_v1';
+        const LS_QUEUE = 'bazar_queue_v1';
+        const LS_AUTH = 'bazar_auth_v1';
+        const LS_USER = 'bazar_user_v1';
+
         let allReports = [];
+        let syncBusy = false;
+        let syncedOnce = false;
 
-        async function loadCurrentUser() {
+        /* ---------- локальное хранилище ---------- */
+
+        function readJson(key, fallback) {
             try {
-                const res = await fetch('/auth/me');
-                if (!res.ok) {
-                    window.location.href = '/login';
-                    return;
-                }
-                const data = await res.json();
-                document.getElementById('currentUser').textContent = '👤 ' + data.username;
+                const raw = localStorage.getItem(key);
+                return raw ? JSON.parse(raw) : fallback;
             } catch (e) {
-                window.location.href = '/login';
+                return fallback;
             }
         }
 
-        async function logout() {
-            await fetch('/auth/logout', { method: 'POST' });
-            window.location.href = '/login';
-        }
-
-        function addExpenseRow(name = '', qty = '', price = '') {
-            const container = document.getElementById('expensesList');
-            const row = document.createElement('div');
-            row.className = 'expense-row';
-            row.innerHTML = `
-                <input type="text" placeholder="Товар" value="${name}" class="p-name" required style="flex: 2;">
-                <input type="number" step="0.1" placeholder="Кг" value="${qty}" class="p-qty" required style="flex: 1;">
-                <input type="number" step="0.1" placeholder="Цена" value="${price}" class="p-price" required style="flex: 1;">
-                <button type="button" class="del-row-btn" onclick="this.parentElement.remove()">✕</button>
-            `;
-            container.appendChild(row);
-        }
-
-        addExpenseRow();
-
-        async function loadReports() {
-            const res = await fetch('/reports/');
-            if (res.status === 401) {
-                window.location.href = '/login';
-                return;
+        function writeJson(key, value) {
+            try {
+                localStorage.setItem(key, JSON.stringify(value));
+            } catch (e) {
+                console.warn('Не удалось сохранить на телефон', e);
             }
-            allReports = await res.json();
-            
+        }
+
+        const readLocal = () => readJson(LS_REPORTS, []);
+        const writeLocal = (list) => writeJson(LS_REPORTS, list);
+        const readQueue = () => readJson(LS_QUEUE, []);
+        const writeQueue = (list) => writeJson(LS_QUEUE, list);
+
+        function normalizeNumber(value) {
+            const n = parseFloat(String(value == null ? 0 : value).replace(',', '.'));
+            return isFinite(n) ? Math.round(n * 100) / 100 : 0;
+        }
+
+        function normalizeReport(rep) {
+            const expenses = Array.isArray(rep.expenses) ? rep.expenses.map((e) => ({
+                product_name: e.product_name || '',
+                quantity_kg: normalizeNumber(e.quantity_kg),
+                buy_price: normalizeNumber(e.buy_price)
+            })) : [];
+            const totalSpent = rep.total_spent != null
+                ? normalizeNumber(rep.total_spent)
+                : Math.round(expenses.reduce((sum, e) => sum + e.quantity_kg * e.buy_price, 0) * 100) / 100;
+            const totalRevenue = normalizeNumber(rep.total_revenue);
+            return {
+                date: rep.date || rep.report_date || '',
+                expenses,
+                total_spent: totalSpent,
+                total_revenue: totalRevenue,
+                net_profit: rep.net_profit != null
+                    ? normalizeNumber(rep.net_profit)
+                    : Math.round((totalRevenue - totalSpent) * 100) / 100,
+                notes: rep.notes || ''
+            };
+        }
+
+        function sortReports(list) {
+            return list.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+        }
+
+        function upsertLocal(report) {
+            const list = readLocal().filter((r) => r.date !== report.date);
+            list.push(report);
+            writeLocal(sortReports(list));
+            allReports = readLocal();
+        }
+
+        function deleteLocal(date) {
+            writeLocal(readLocal().filter((r) => r.date !== date));
+            allReports = readLocal();
+        }
+
+        function enqueueSave(payload) {
+            const queue = readQueue().filter((item) => item.date !== payload.report_date);
+            queue.push({ type: 'save', date: payload.report_date, payload, ts: Date.now() });
+            writeQueue(queue);
+        }
+
+        function enqueueDelete(date) {
+            const queue = readQueue().filter((item) => item.date !== date);
+            queue.push({ type: 'delete', date, ts: Date.now() });
+            writeQueue(queue);
+        }
+
+        /* ---------- интерфейс ---------- */
+
+        function toast(message) {
+            const el = document.getElementById('toast');
+            el.textContent = message;
+            el.classList.add('show');
+            clearTimeout(toast._timer);
+            toast._timer = setTimeout(() => el.classList.remove('show'), 2600);
+        }
+
+        function money(value) {
+            return normalizeNumber(value).toFixed(2);
+        }
+
+        function renderHistory() {
             const historyDiv = document.getElementById('history');
-            if (allReports.length === 0) {
-                historyDiv.innerHTML = '<p>Пока нет сохраненных отчетов</p>';
+            if (!allReports.length) {
+                historyDiv.innerHTML = '<p class="empty">Пока нет сохранённых отчётов</p>';
                 return;
             }
 
-            historyDiv.innerHTML = allReports.reverse().map(rep => `
+            historyDiv.innerHTML = allReports.map((rep) => `
                 <div class="report-item">
                     <div class="report-header">
-                        <b>📅 ${rep.date}</b>
+                        <b>📅 ${escapeHtml(rep.date)}</b>
                         <div class="actions">
                             <button class="btn-blue" onclick="editReport('${rep.date}')">✏️ Изменить</button>
                             <button class="btn-red" onclick="deleteReport('${rep.date}')">🗑️ Удалить</button>
                         </div>
                     </div>
-                    <div>Выручка: <b>${Number(rep.total_revenue).toFixed(2)}</b> | Затраты: <b>${Number(rep.total_spent).toFixed(2)}</b></div>
+                    <div>Выручка: <b>${money(rep.total_revenue)}</b> | Затраты: <b>${money(rep.total_spent)}</b></div>
                     <div style="color: ${rep.net_profit >= 0 ? '#27ae60' : '#e74c3c'}; font-weight: bold;">
-                        Прибыль: ${Number(rep.net_profit).toFixed(2)}
+                        Прибыль: ${money(rep.net_profit)}
                     </div>
-                    ${rep.notes ? `<small style="color: #666;">Заметки: ${rep.notes}</small>` : ''}
+                    ${rep.notes ? `<small style="color: #666;">Заметки: ${escapeHtml(rep.notes)}</small>` : ''}
                 </div>
             `).join('');
         }
 
-        window.editReport = function(dateStr) {
-            const rep = allReports.find(r => r.date === dateStr);
+        function escapeHtml(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderStatus(extraText) {
+            const bar = document.getElementById('statusBar');
+            const text = document.getElementById('statusText');
+            const btn = document.getElementById('syncBtn');
+            const pending = readQueue().length;
+
+            bar.classList.remove('online', 'offline', 'pending');
+
+            if (syncBusy) {
+                text.textContent = 'Синхронизация…';
+                btn.disabled = true;
+            } else if (!navigator.onLine) {
+                bar.classList.add('offline');
+                text.textContent = pending
+                    ? 'Офлайн · ' + pending + ' изм. сохранены на телефоне'
+                    : 'Офлайн · данные сохраняются на телефоне';
+                btn.disabled = false;
+            } else if (pending) {
+                bar.classList.add('pending');
+                text.textContent = 'Онлайн · ' + pending + ' изм. ждут отправки';
+                btn.disabled = false;
+            } else {
+                bar.classList.add('online');
+                text.textContent = extraText || (syncedOnce ? 'Онлайн · всё сохранено' : 'Онлайн');
+                btn.disabled = false;
+            }
+        }
+
+        /* ---------- синхронизация с сервером ---------- */
+
+        async function pullReports() {
+            const res = await fetch('/reports/?t=' + Date.now(), { cache: 'no-store' });
+            if (res.status === 401) {
+                goLogin();
+                return;
+            }
+            if (!res.ok) throw new Error('Сервер вернул ' + res.status);
+            const list = await res.json();
+            writeLocal(sortReports(list.map(normalizeReport)));
+            allReports = readLocal();
+            renderHistory();
+            syncedOnce = true;
+        }
+
+        async function syncNow(options) {
+            const silent = !!(options && options.silent);
+            if (syncBusy) return;
+            if (!navigator.onLine) {
+                renderStatus();
+                if (!silent) toast('Нет интернета — данные уже сохранены на телефоне');
+                return;
+            }
+
+            syncBusy = true;
+            renderStatus();
+
+            const queue = readQueue();
+            const remaining = [];
+            let failed = false;
+
+            for (const item of queue) {
+                if (failed) {
+                    remaining.push(item);
+                    continue;
+                }
+                try {
+                    let res;
+                    if (item.type === 'save') {
+                        res = await fetch('/reports/', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(item.payload)
+                        });
+                    } else {
+                        res = await fetch('/reports/' + encodeURIComponent(item.date), { method: 'DELETE' });
+                    }
+
+                    if (res.status === 401) {
+                        syncBusy = false;
+                        goLogin();
+                        return;
+                    }
+                    // 404 при удалении — значит запись уже удалена, это нормально.
+                    if (!res.ok && !(item.type === 'delete' && res.status === 404)) {
+                        failed = true;
+                        remaining.push(item);
+                    }
+                } catch (err) {
+                    failed = true;
+                    remaining.push(item);
+                }
+            }
+
+            writeQueue(remaining);
+
+            try {
+                await pullReports();
+            } catch (err) {
+                failed = true;
+            }
+
+            syncBusy = false;
+            renderStatus(failed ? 'Онлайн · сервер недоступен, данные на телефоне' : null);
+
+            if (!silent) {
+                if (failed) toast('Не удалось связаться с сервером — попробуем позже');
+                else toast('Сохранено и отправлено на сервер');
+            }
+        }
+
+        function goLogin() {
+            localStorage.removeItem(LS_AUTH);
+            window.location.href = '/login';
+        }
+
+        async function logout() {
+            try {
+                await fetch('/auth/logout', { method: 'POST' });
+            } catch (e) { /* офлайн — просто выходим локально */ }
+            localStorage.removeItem(LS_AUTH);
+            localStorage.removeItem(LS_USER);
+            window.location.href = '/login';
+        }
+
+        /* ---------- форма ---------- */
+
+        document.getElementById('report_date').valueAsDate = new Date();
+
+        function addExpenseRow(name, qty, price) {
+            const container = document.getElementById('expensesList');
+            const row = document.createElement('div');
+            row.className = 'expense-row';
+            row.innerHTML = `
+                <input type="text" placeholder="Товар" class="p-name" style="flex: 2;">
+                <input type="number" step="0.01" inputmode="decimal" placeholder="Кг" class="p-qty" style="flex: 1;">
+                <input type="number" step="0.01" inputmode="decimal" placeholder="Цена" class="p-price" style="flex: 1;">
+                <button type="button" class="del-row-btn" onclick="this.parentElement.remove()">✕</button>
+            `;
+            row.querySelector('.p-name').value = name || '';
+            row.querySelector('.p-qty').value = qty != null ? qty : '';
+            row.querySelector('.p-price').value = price != null ? price : '';
+            container.appendChild(row);
+        }
+
+        function resetForm() {
+            document.getElementById('reportForm').reset();
+            document.getElementById('report_date').valueAsDate = new Date();
+            document.getElementById('expensesList').innerHTML = '';
+            addExpenseRow();
+        }
+
+        function collectExpenses() {
+            const expenses = [];
+            document.querySelectorAll('.expense-row').forEach((row) => {
+                const name = row.querySelector('.p-name').value.trim();
+                const qty = normalizeNumber(row.querySelector('.p-qty').value);
+                const price = normalizeNumber(row.querySelector('.p-price').value);
+                if (name) {
+                    expenses.push({ product_name: name, quantity_kg: qty, buy_price: price });
+                }
+            });
+            return expenses;
+        }
+
+        document.getElementById('reportForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const date = document.getElementById('report_date').value;
+            if (!date) {
+                toast('Укажите дату отчёта');
+                return;
+            }
+
+            const expenses = collectExpenses();
+            const totalRevenue = normalizeNumber(document.getElementById('total_revenue').value);
+            const totalSpent = Math.round(expenses.reduce((sum, item) => sum + item.quantity_kg * item.buy_price, 0) * 100) / 100;
+
+            const report = normalizeReport({
+                date,
+                expenses,
+                total_spent: totalSpent,
+                total_revenue: totalRevenue,
+                net_profit: Math.round((totalRevenue - totalSpent) * 100) / 100,
+                notes: document.getElementById('notes').value
+            });
+
+            // 1. Сначала сохраняем на телефон — работает всегда, даже без интернета.
+            upsertLocal(report);
+            enqueueSave({
+                report_date: report.date,
+                expenses: report.expenses,
+                total_revenue: report.total_revenue,
+                notes: report.notes
+            });
+            renderHistory();
+            renderStatus();
+            resetForm();
+
+            // 2. Потом пытаемся отправить на сервер.
+            if (!navigator.onLine) {
+                toast('Сохранено на телефоне. Отправим, когда появится интернет');
+                return;
+            }
+
+            const btn = document.getElementById('saveBtn');
+            btn.disabled = true;
+            await syncNow({ silent: true });
+            btn.disabled = false;
+
+            toast(readQueue().length
+                ? 'Сохранено на телефоне — сервер пока недоступен'
+                : 'Отчёт сохранён и отправлен');
+        });
+
+        /* ---------- история ---------- */
+
+        window.editReport = function (dateStr) {
+            const rep = allReports.find((r) => r.date === dateStr);
             if (!rep) return;
 
             document.getElementById('report_date').value = rep.date;
@@ -143,75 +452,83 @@
 
             const container = document.getElementById('expensesList');
             container.innerHTML = '';
-            
-            if (rep.expenses && rep.expenses.length > 0) {
-                rep.expenses.forEach(ex => {
-                    addExpenseRow(ex.product_name, ex.quantity_kg, ex.buy_price);
-                });
+
+            if (rep.expenses && rep.expenses.length) {
+                rep.expenses.forEach((ex) => addExpenseRow(ex.product_name, ex.quantity_kg, ex.buy_price));
             } else {
                 addExpenseRow();
             }
 
             window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        window.deleteReport = async function (dateStr) {
+            if (!confirm('Точно удалить отчёт за ' + dateStr + '?')) return;
+
+            deleteLocal(dateStr);
+            enqueueDelete(dateStr);
+            renderHistory();
+            renderStatus();
+
+            if (!navigator.onLine) {
+                toast('Удалено на телефоне. Отправим, когда появится интернет');
+                return;
+            }
+            await syncNow({ silent: true });
+        };
+
+        /* ---------- запуск ---------- */
+
+        function registerServiceWorker() {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('/sw.js').catch(() => {});
+            }
         }
 
-        window.deleteReport = async function(dateStr) {
-            if (!confirm(`Точно удалить отчет за ${dateStr}?`)) return;
+        async function start() {
+            registerServiceWorker();
 
-            const res = await fetch(`/reports/${dateStr}`, {
-                method: 'DELETE'
-            });
+            allReports = readLocal();
+            renderHistory();
+            renderStatus();
 
-            if (res.status === 401) {
-                window.location.href = '/login';
-                return;
+            if (!document.querySelector('.expense-row')) addExpenseRow();
+
+            let username = localStorage.getItem(LS_USER) || '';
+            try {
+                const res = await fetch('/auth/me', { cache: 'no-store' });
+                if (res.status === 401) {
+                    goLogin();
+                    return;
+                }
+                if (res.ok) {
+                    const data = await res.json();
+                    username = data.username || username;
+                    localStorage.setItem(LS_AUTH, '1');
+                    localStorage.setItem(LS_USER, username);
+                }
+            } catch (err) {
+                // Нет сети: пускаем, только если вход уже был на этом телефоне.
+                if (localStorage.getItem(LS_AUTH) !== '1') {
+                    window.location.href = '/login';
+                    return;
+                }
             }
 
-            loadReports();
+            if (username) {
+                document.getElementById('currentUser').textContent = '👤 ' + username;
+            }
+
+            await syncNow({ silent: true });
         }
 
-        document.getElementById('reportForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-
-            const rows = document.querySelectorAll('.expense-row');
-            const expenses = [];
-            rows.forEach(row => {
-                expenses.push({
-                    product_name: row.querySelector('.p-name').value,
-                    quantity_kg: parseFloat(row.querySelector('.p-qty').value),
-                    buy_price: parseFloat(row.querySelector('.p-price').value)
-                });
-            });
-
-            const payload = {
-                report_date: document.getElementById('report_date').value,
-                expenses: expenses,
-                total_revenue: parseFloat(document.getElementById('total_revenue').value),
-                notes: document.getElementById('notes').value
-            };
-
-            const saveRes = await fetch('/reports/', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (saveRes.status === 401) {
-                window.location.href = '/login';
-                return;
-            }
-
-            if (!saveRes.ok) {
-                alert('Не удалось сохранить отчёт. Попробуйте ещё раз.');
-                return;
-            }
-
-            loadReports();
-            alert('Отчёт успешно сохранен/обновлен!');
+        window.addEventListener('online', () => {
+            renderStatus();
+            syncNow({ silent: true });
         });
+        window.addEventListener('offline', () => renderStatus());
 
-        loadCurrentUser();
-        loadReports();
+        start();
     </script>
 </body>
 </html>

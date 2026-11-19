@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#27ae60">
     <title>Вход — Базар Учёт</title>
+    <link rel="apple-touch-icon" href="/static/icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Базар Учёт">
     <style>
         * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         body {
@@ -88,6 +91,26 @@
         const errorBox = document.getElementById('error');
         const submitBtn = document.getElementById('submitBtn');
 
+        // Сервис-воркер кэширует страницу, чтобы она открывалась и без интернета.
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+
+        // Если вход уже был на этом телефоне — не держим человека на логине.
+        (async function alreadyLoggedIn() {
+            try {
+                const res = await fetch('/auth/me', { cache: 'no-store' });
+                if (res.ok) {
+                    window.location.href = '/';
+                    return;
+                }
+            } catch (err) {
+                if (localStorage.getItem('bazar_auth_v1') === '1') {
+                    window.location.href = '/';
+                }
+            }
+        })();
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             errorBox.classList.remove('show');
@@ -105,6 +128,7 @@
                 });
 
                 if (res.ok) {
+                    localStorage.setItem('bazar_auth_v1', '1');
                     window.location.href = '/';
                     return;
                 }
@@ -113,7 +137,7 @@
                 errorBox.textContent = data.detail || 'Неверный логин или пароль';
                 errorBox.classList.add('show');
             } catch (err) {
-                errorBox.textContent = 'Нет связи с сервером. Попробуйте ещё раз.';
+                errorBox.textContent = 'Нет интернета. Первый вход возможен только при наличии связи — попробуйте позже.';
                 errorBox.classList.add('show');
             } finally {
                 submitBtn.disabled = false;

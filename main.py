@@ -228,9 +228,10 @@ def me(request: Request, username: str = Depends(require_user)):
 
 
 @app.get("/", response_class=HTMLResponse)
-def get_ui(request: Request):
-    if not get_current_user(request):
-        return RedirectResponse("/login", status_code=303)
+def get_ui():
+    # Страница отдаётся всегда, чтобы её можно было закэшировать для офлайн-режима.
+    # Доступ к данным всё равно защищён: без сессии API вернёт 401,
+    # а интерфейс сам перенаправит на /login.
     with open(os.path.join(BASE_DIR, "index.html"), "r", encoding="utf-8") as f:
         return f.read()
 
@@ -238,6 +239,14 @@ def get_ui(request: Request):
 @app.get("/manifest.json")
 def get_manifest():
     return FileResponse(os.path.join(BASE_DIR, "manifest.json"), media_type="application/json")
+
+
+@app.get("/sw.js")
+def get_service_worker():
+    response = FileResponse(os.path.join(BASE_DIR, "sw.js"), media_type="application/javascript")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Service-Worker-Allowed"] = "/"
+    return response
 
 
 @app.post("/reports/")

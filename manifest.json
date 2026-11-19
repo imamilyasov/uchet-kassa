@@ -1,16 +1,24 @@
 {
-  "name": "Учет & Касса",
-  "short_name": "Учет",
-  "description": "Приложение для учета продаж и кассы на базаре",
+  "name": "Базар Учёт",
+  "short_name": "Учёт",
+  "description": "Приложение для учёта выручки, закупок и прибыли за день",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "background_color": "#f4f6f8",
+  "theme_color": "#27ae60",
   "icons": [
     {
-      "src": "/icon.png",
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icon.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
